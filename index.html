@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#0b1a33">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>Cofre de Senhas</title>
+<style>
+:root{--bg:#0b1a33;--card:#12294f;--tx:#f1f5f9;--mu:#9fb3cf;--ac:#55d8cf;--pt:#0b1a33;--bd:#24406e;--rd:#f87171}
+@media(prefers-color-scheme:light){:root{--bg:#f3f7fa;--card:#fff;--tx:#12294f;--mu:#5b6f8c;--ac:#1f8f9a;--pt:#fff;--bd:#cbd8e4;--rd:#dc2626}}
+*{box-sizing:border-box}
+body{margin:0;font:16px system-ui,sans-serif;background:var(--bg);color:var(--tx);padding:env(safe-area-inset-top) 0 env(safe-area-inset-bottom)}
+.w{max-width:560px;margin:0 auto;padding:16px}
+h1{font-size:1.3rem;margin:.2em 0}
+input,select,textarea,button{font:inherit;color:var(--tx);background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;width:100%}
+textarea{min-height:70px}
+button{cursor:pointer;width:auto}
+.p{background:var(--ac);color:var(--pt);border:0;font-weight:600}
+.d{color:var(--rd)}
+.r{display:flex;gap:8px;align-items:center}
+.r>*{flex:1}.r>button{flex:0 0 auto}
+label{display:block;font-size:.8rem;color:var(--mu);margin:12px 0 4px}
+.it{background:var(--card);border:1px solid var(--bd);border-radius:12px;padding:14px;margin:10px 0;cursor:pointer}
+.it b{display:block}.it small{color:var(--mu)}
+.tabs{display:flex;gap:6px;overflow-x:auto;margin:12px 0}
+.tabs button{border-radius:20px;padding:8px 14px;white-space:nowrap}
+.tabs .on{background:var(--ac);color:var(--pt);border-color:var(--ac)}
+.fab{position:fixed;right:20px;bottom:calc(20px + env(safe-area-inset-bottom));width:58px;height:58px;border-radius:50%;font-size:2rem;padding:0}
+dialog{width:min(520px,94vw);max-height:92vh;background:var(--bg);color:var(--tx);border:1px solid var(--bd);border-radius:16px;padding:16px}
+dialog::backdrop{background:#000a}
+.m{color:var(--mu);font-size:.85rem}
+#toast{position:fixed;left:50%;bottom:90px;transform:translateX(-50%);background:var(--tx);color:var(--bg);padding:10px 16px;border-radius:20px;opacity:0;transition:.3s;pointer-events:none}
+#toast.s{opacity:1}
+</style>
+</head>
+<body>
+<div class="w" id="app"></div>
+<div id="toast"></div>
+<dialog id="dlg"></dialog>
+<script>
+const $=s=>document.querySelector(s),enc=new TextEncoder(),dec=new TextDecoder();
+const CATS=['Apps','Sites','Bancos','Dados'],ICON={Apps:'📱',Sites:'🌐',Bancos:'🏦',Dados:'🗂️'};
+let key,salt,items=[],cat='Todos',q='',timer,cbT;
+const esc=s=>String(s??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const b64=b=>{let s='';new Uint8Array(b).forEach(x=>s+=String.fromCharCode(x));return btoa(s)};
+const ub64=s=>Uint8Array.from(atob(s),c=>c.charCodeAt(0));
+const toast=t=>{const e=$('#toast');e.textContent=t;e.className='s';setTimeout(()=>e.className='',1800)};
+
+async function derive(pw,s){
+  const k=await crypto.subtle.importKey('raw',enc.encode(pw),'PBKDF2',false,['deriveKey']);
+  return crypto.subtle.deriveKey({name:'PBKDF2',salt:s,iterations:310000,hash:'SHA-256'},k,{name:'AES-GCM',length:256},false,['encrypt','decrypt']);
+}
+async function save(){
+  const iv=crypto.getRandomValues(new Uint8Array(12));
+  const ct=await crypto.subtle.encrypt({name:'AES-GCM',iv},key,enc.encode(JSON.stringify(items)));
+  localStorage.setItem('vault',JSON.stringify({s:b64(salt),iv:b64(iv),d:b64(ct)}));
+}
+async function unlock(pw){
+  const v=JSON.parse(localStorage.getItem('vault'));
+  salt=ub64(v.s);key=await derive(pw,salt);
+  items=JSON.parse(dec.decode(await crypto.subtle.decrypt({name:'AES-GCM',iv:ub64(v.iv)},key,ub64(v.d))));
+}
+function lock(){key=null;items=[];$('#dlg').open&&$('#dlg').close();renderLock()}
+function bump(){clearTimeout(timer);if(key)timer=setTimeout(lock,60000)}
+['click','touchstart','keydown'].forEach(e=>addEventListener(e,bump));
+document.addEventListener('visibilitychange',()=>{if(document.hidden&&key)lock()});
+
+function gen(n=18){
+  const set='abcdefghijkmnopqrstuvwxyzABCDEFGHJKLMNPQRSTUVWXYZ23456789!@#$%&*?-_';
+  const a=crypto.getRandomValues(new Uint32Array(n));
+  return [...a].map(x=>set[x%set.length]).join('');
+}
+async function copy(t){
+  await navigator.clipboard.writeText(t);toast('Copiado! Limpa em 30s');
+  clearTimeout(cbT);cbT=setTimeout(()=>navigator.clipboard.writeText('').catch(()=>{}),30000);
+}
+
+function renderLock(){
+  const novo=!localStorage.getItem('vault');
+  $('#app').innerHTML=`<div style="margin-top:12vh;text-align:center"><img src="icon-192.png" alt="" style="width:120px;height:120px;border-radius:26px"><h1>Cofre de Senhas</h1>
+  <p class="m">${novo?'Crie uma senha mestra. Ela não pode ser recuperada se você esquecer.':'Digite sua senha mestra.'}</p>
+  <input id="pw" type="password" placeholder="Senha mestra" autocomplete="off">
+  ${novo?'<input id="pw2" type="password" placeholder="Repita a senha mestra" style="margin-top:8px" autocomplete="off">':''}
+  <button class="p" id="go" style="width:100%;margin-top:12px">${novo?'Criar cofre':'Desbloquear'}</button>
+  <p class="m" id="err" style="color:var(--rd)"></p>
+  ${novo?'<label>Já tem um backup?</label><input type="file" id="imp0" accept=".json">':''}</div>`;
+  $('#go').onclick=async()=>{
+    const pw=$('#pw').value,err=$('#err');
+    try{
+      if(novo){
+        if(pw.length<8)return err.textContent='Use pelo menos 8 caracteres.';
+        if(pw!==$('#pw2').value)return err.textContent='As senhas não conferem.';
+        salt=crypto.getRandomValues(new Uint8Array(16));key=await derive(pw,salt);items=[];await save();
+      }else{err.textContent='Verificando...';await unlock(pw)}
+      cat='Todos';q='';renderList();bump();
+    }catch(e){err.textContent='Senha incorreta.'}
+  };
+  $('#pw').onkeydown=e=>e.key==='Enter'&&($('#pw2')||$('#go')).focus&&$('#go').click();
+  if($('#imp0'))$('#imp0').onchange=importar;
+}
+
+function renderList(){
+  const list=items.filter(i=>(cat==='Todos'||i.cat===cat)&&(i.title+i.user+i.url).toLowerCase().includes(q.toLowerCase()))
+    .sort((a,b)=>a.title.localeCompare(b.title));
+  $('#app').innerHTML=`<div class="r"><h1 style="display:flex;align-items:center;gap:10px"><img src="icon-192.png" alt="" style="width:34px;height:34px;border-radius:8px"> Cofre</h1><button id="menu">⋯</button></div>
+  <input id="q" placeholder="Buscar..." value="${esc(q)}">
+  <div class="tabs">${['Todos',...CATS].map(c=>`<button class="${c===cat?'on':''}" data-c="${c}">${ICON[c]||''} ${c}</button>`).join('')}</div>
+  ${list.map(i=>`<div class="it" data-id="${i.id}"><b>${ICON[i.cat]} ${esc(i.title)}</b><small>${esc(i.user)||'—'}</small></div>`).join('')||'<p class="m" style="text-align:center;margin-top:40px">Nenhum item. Toque no + para adicionar.</p>'}
+  <button class="p fab" id="add">+</button>`;
+  $('#q').oninput=e=>{q=e.target.value;const p=e.target.selectionStart;renderList();$('#q').focus();$('#q').setSelectionRange(p,p)};
+  document.querySelectorAll('.tabs button').forEach(b=>b.onclick=()=>{cat=b.dataset.c;renderList()});
+  document.querySelectorAll('.it').forEach(e=>e.onclick=()=>detail(e.dataset.id));
+  $('#add').onclick=()=>form();
+  $('#menu').onclick=menu;
+}
+
+function open(html){const d=$('#dlg');d.innerHTML=html;d.showModal();return d}
+function detail(id){
+  const i=items.find(x=>x.id===id);let vis=false;
+  const d=open(`<h1>${ICON[i.cat]} ${esc(i.title)}</h1>
+  ${i.url?`<label>Site / App</label><div>${esc(i.url)}</div>`:''}
+  <label>Usuário / Login</label><div class="r"><div>${esc(i.user)||'—'}</div><button id="cu">Copiar</button></div>
+  <label>Senha</label><div class="r"><div id="pv" style="font-family:monospace;word-break:break-all">••••••••••</div><button id="sh">👁</button><button id="cp">Copiar</button></div>
+  ${i.notes?`<label>Notas (agência, conta, dados...)</label><div style="white-space:pre-wrap">${esc(i.notes)}</div>`:''}
+  <div class="r" style="margin-top:20px"><button id="ed">Editar</button><button class="d" id="dl">Excluir</button><button id="fc">Fechar</button></div>`);
+  d.querySelector('#sh').onclick=()=>{vis=!vis;d.querySelector('#pv').textContent=vis?i.pass:'••••••••••'};
+  d.querySelector('#cp').onclick=()=>copy(i.pass);
+  d.querySelector('#cu').onclick=()=>copy(i.user);
+  d.querySelector('#fc').onclick=()=>d.close();
+  d.querySelector('#ed').onclick=()=>{d.close();form(i)};
+  d.querySelector('#dl').onclick=async()=>{if(confirm('Excluir este item?')){items=items.filter(x=>x.id!==id);await save();d.close();renderList()}};
+}
+function form(i={}){
+  const d=open(`<h1>${i.id?'Editar':'Novo item'}</h1>
+  <label>Categoria</label><select id="fc">${CATS.map(c=>`<option ${c===(i.cat||(cat!=='Todos'?cat:'Sites'))?'selected':''}>${c}</option>`).join('')}</select>
+  <label>Nome</label><input id="ft" value="${esc(i.title)}" placeholder="Ex: Nubank, Instagram">
+  <label>Site / App (opcional)</label><input id="fu" value="${esc(i.url)}">
+  <label>Usuário / Login / CPF</label><input id="fl" value="${esc(i.user)}" autocomplete="off">
+  <label>Senha</label><div class="r"><input id="fp" value="${esc(i.pass)}" autocomplete="off"><button id="fg">Gerar</button></div>
+  <label>Notas (agência, conta, senha de cartão, perguntas secretas...)</label><textarea id="fn">${esc(i.notes)}</textarea>
+  <div class="r" style="margin-top:16px"><button class="p" id="fs">Salvar</button><button id="fx">Cancelar</button></div>`);
+  d.querySelector('#fg').onclick=()=>d.querySelector('#fp').value=gen();
+  d.querySelector('#fx').onclick=()=>d.close();
+  d.querySelector('#fs').onclick=async()=>{
+    const v=s=>d.querySelector(s).value.trim();
+    if(!v('#ft'))return toast('Informe um nome');
+    const o={id:i.id||crypto.randomUUID(),cat:v('#fc'),title:v('#ft'),url:v('#fu'),user:v('#fl'),pass:d.querySelector('#fp').value,notes:v('#fn')};
+    items=i.id?items.map(x=>x.id===i.id?o:x):[...items,o];
+    await save();d.close();renderList();
+  };
+}
+function menu(){
+  const d=open(`<h1>Menu</h1>
+  <button id="mb" style="width:100%;margin:6px 0">⬇️ Exportar backup (criptografado)</button>
+  <label>⬆️ Importar backup (substitui o cofre atual)</label><input type="file" id="mi" accept=".json">
+  <button id="ml" style="width:100%;margin:12px 0">🔒 Bloquear agora</button>
+  <button class="d" id="mw" style="width:100%">🗑 Apagar tudo</button>
+  <button id="mc" style="width:100%;margin-top:12px">Fechar</button>
+  <p class="m">Bloqueio automático após 1 min sem uso. Dados ficam só neste aparelho, criptografados com AES-256.</p>`);
+  d.querySelector('#mc').onclick=()=>d.close();
+  d.querySelector('#ml').onclick=lock;
+  d.querySelector('#mb').onclick=()=>{
+    const a=document.createElement('a');
+    a.href=URL.createObjectURL(new Blob([localStorage.getItem('vault')],{type:'application/json'}));
+    a.download='cofre-backup-'+new Date().toISOString().slice(0,10)+'.json';a.click();
+  };
+  d.querySelector('#mi').onchange=importar;
+  d.querySelector('#mw').onclick=()=>{if(confirm('Apagar TODOS os dados deste aparelho? Não tem volta.')&&confirm('Tem certeza absoluta?')){localStorage.removeItem('vault');lock()}};
+}
+async function importar(e){
+  const f=e.target.files[0];if(!f)return;
+  try{
+    const t=await f.text(),v=JSON.parse(t);if(!v.s||!v.iv||!v.d)throw 0;
+    if(localStorage.getItem('vault')&&!confirm('Isso substituirá o cofre atual. Continuar?'))return;
+    localStorage.setItem('vault',t);lock();toast('Backup importado. Use a senha mestra dele.');
+  }catch(_){toast('Arquivo inválido')}
+}
+renderLock();
+if('serviceWorker' in navigator)navigator.serviceWorker.register('sw.js').catch(()=>{});
+</script>
+</body>
+</html>
